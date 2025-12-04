@@ -6,7 +6,17 @@ title: identifiabl
 # identifiabl
 
 **user-scoped identity and authentication for llm and agentic apps (apps sdk + mcp)**
-  
+
+```bash
+npm i identifiabl
+```
+
+> 1-line jwt/jwks verification for mcp and apps sdk backends — without touching app logic
+> user → apps sdk/mcp → identifiabl → your backend
+>
+> ✓ production-tested in [inner](https://innerdreamapp.com)  
+> ✓ first [gatewaystack](https://gatewaystack.com) release  
+
 until now, most llm systems have relied on shared api keys — not real user identity.
 
 the shift toward agentic systems, personal data, and enterprise governance requires
@@ -14,17 +24,45 @@ every model call to be tied to a verified user, tenant, and scope.
 
 identifiabl defines this layer.
 
+```ts
+import { createIdentifiablVerifier } from "identifiabl";
+
+const identifiablVerifier = createIdentifiablVerifier({
+  issuer: OAUTH_ISSUER,
+  audience: OAUTH_AUDIENCE || "",
+  jwksUri: JWKS_URI_FALLBACK,
+  source: "auth0",
+  scopeClaim: "scope",
+  roleClaim: "permissions",
+});
+
+const result = await identifiablVerifier(accessToken)
+```
+→ req.identity is now available everywhere  
+→ all requests are user-bound  
+→ app logic stays untouched
+
+**production example:**
+identifiabl now powers all authentication in the [inner mcp server](https://innerdreamapp.com).
+it replaced ~100 lines of custom jose logic with a single verifier call.
+read the full before vs. after breakdown [here](https://reducibl.com/2025/12/03/one-line-jwt-jwks-verification-for-mcp-backends.html)
+
 ## at a glance
 
 identifiabl is a **user-scoped identity and authentication gateway** for llm apps.  
+
+**identifiabl sits between your app/agent and your model provider, forming the identity layer of gatewaystack.** 
+
 it lets you:
 
 - verify user identity via oidc / apps sdk tokens  
 - attach user, org, tenant, and scope metadata  
 - enforce that every model call is user-bound  
 - emit identity-level audit events  
+- normalizes identity into `{ user_id, org_id, tenant, roles, scopes }` with consistent claim mapping across providers  
 
-> 📦 **implementation**: [`ai-auth-gateway`](https://github.com/davidcrowe/gatewaystack/tree/main/packages/ai-auth-gateway) (published)
+> 📦 **implementation**: [`identifiabl`](https://github.com/davidcrowe/GatewayStack/tree/main/packages/identifiabl-core)  
+> 📦 **npm package**: [`npm i identifiabl`](https://www.npmjs.com/package/identifiabl) (published)
 
 ## why now?
 
@@ -34,7 +72,10 @@ a new layer is required — **the user-scoped trust and governance gateway**.
 
 it sits between applications (or agents) and model providers, ensuring that **every request is authenticated, authorized, observable, and governed.**
 
-**gatewaystack** defines this layer. **identifiabl** is the user-scoped identity and authentication module.
+**gatewaystack** defines this layer. **identifiabl** is the linchpin... an authentication module that attaches user-scoped identity to a shared request context for ai model calls.
+
+> ChatGPT Apps SDK and MCP provide verified user identity through signed tokens.
+> identifiabl validates these tokens and exposes canonical user/org/tenant metadata to your gateway or agent runtime.
 
 ## example use cases
 
@@ -112,7 +153,7 @@ it validates identity tokens, extracts normalized user metadata, and binds that 
 
 ### within the shared requestcontext
 
-all gatewaystack modules operate on a shared [`RequestContext`](https://github.com/davidcrowe/gatewaystack/blob/main/docs/reference/interfaces.md) object.
+all gatewaystack modules operate on a shared `RequestContext` object.
 
 **identifiabl is responsible for**:
 
@@ -138,147 +179,27 @@ identity becomes a piece of runtime metadata that other gatewaystack modules rel
 - `proxyabl` to perform provider routing (see `proxyabl`)  
 - `explicabl` to store or ship audit logs by itself (see `explicabl`)  
 
-## the core functions
+## when not to use identifiabl?
 
-**1. `verifyToken` — verify oidc / apps sdk identity tokens**  
-validates rs256 jwts, audiences, issuers, expirations, and nonce.
+- you don’t need user-level audit trails.
+- your app is single-tenant and already uses per-user API keys with minimal governance needs.
+- you are not using agents, tools, or MCP.
 
-a minimal typescript implementation:
-```ts
-// auth/verifyToken.ts
-import { createRemoteJWKSet, jwtVerify, JWTPayload } from 'jose';
+## under the hood
 
-const ISSUER = process.env.AUTH_ISSUER!;
-const AUDIENCE = process.env.AUTH_AUDIENCE!;
-const JWKS_URI = process.env.AUTH_JWKS_URI!;
+identifiabl wraps a small, framework-agnostic core verifier:
 
-const jwks = createRemoteJWKSet(new URL(JWKS_URI));
+- validates RS256 JWTs via JWKS
+- enforces issuer and audience
+- normalize identity into `{ user_id, org_id, tenant, roles, scopes }`
 
-export type VerifiedIdentity = {
-  user_id: string;
-  org_id?: string;
-  tenant?: string;
-  roles: string[];
-  scopes: string[];
-  raw: JWTPayload;
-};
+Together, these become a canonical `identity` object shared across
+all GatewayStack modules via the `RequestContext`.
 
-export async function verifyToken(authorizationHeader: string | undefined): Promise<VerifiedIdentity> {
-  if (!authorizationHeader?.startsWith('Bearer ')) {
-    throw new Error('missing or invalid bearer token');
-  }
+if you want to integrate at a lower level, use the core helper directly:
 
-  const token = authorizationHeader.slice('Bearer '.length).trim();
-
-  const { payload } = await jwtVerify(token, jwks, {
-    issuer: ISSUER,
-    audience: AUDIENCE,
-  });
-
-  return extractIdentity(payload);
-}
-
-function extractIdentity(payload: JWTPayload): VerifiedIdentity {
-  const scopes =
-    typeof payload.scope === 'string'
-      ? payload.scope.split(' ').filter(Boolean)
-      : Array.isArray(payload.scope)
-      ? payload.scope.map(String)
-      : [];
-
-  return {
-    user_id: String(payload.sub ?? ''),
-    org_id: (payload['org_id'] as string) ?? undefined,
-    tenant: (payload['tenant'] as string) ?? undefined,
-    roles: (payload['roles'] as string[]) ?? [],
-    scopes,
-    raw: payload,
-  };
-}
-```
-
-**2. `extractIdentity` — normalize user/org/tenant metadata**  
-implemented inside `verifyToken` above, it returns a canonical structure:
-```ts
-{ user_id, org_id, tenant, roles, scopes }
-```
-
-**3. `attachIdentity` — bind identity to model request metadata**  
-injects identity into headers or context fields for downstream modules.
-```ts
-// middleware/attachIdentity.ts
-import type { Request, Response, NextFunction } from 'express';
-import { verifyToken, VerifiedIdentity } from '../auth/verifyToken';
-
-declare module 'express-serve-static-core' {
-  interface Request {
-    identity?: VerifiedIdentity;
-  }
-}
-
-export async function attachIdentity(req: Request, res: Response, next: NextFunction) {
-  try {
-    const authHeader = req.headers['authorization'] as string | undefined;
-
-    const identity = await verifyToken(authHeader);
-
-    // attach to request for downstream handlers / modules
-    req.identity = identity;
-
-    // inject normalized identity headers for downstream services / proxies
-    req.headers['x-user-id'] = identity.user_id;
-    if (identity.org_id) req.headers['x-org-id'] = identity.org_id;
-    if (identity.tenant) req.headers['x-tenant'] = identity.tenant;
-    req.headers['x-user-scopes'] = identity.scopes.join(' ');
-
-    return next();
-  } catch (err) {
-    return res.status(401).json({
-      error: 'unauthorized',
-      reason: (err as Error).message ?? 'token validation failed',
-    });
-  }
-}
-```
-
-then wire it up in your gateway server:
-```ts
-import express from 'express';
-import { attachIdentity } from './middleware/attachIdentity';
-
-const app = express();
-
-app.use(attachIdentity);
-
-// all downstream routes now see req.identity and identity headers
-```
-
-**4. `assertIdentity` — enforce presence of user identity**  
-guarantees that no anonymous or shared-key requests pass through.
-```ts
-// middleware/assertIdentity.ts
-import type { Request, Response, NextFunction } from 'express';
-
-export function assertIdentity(req: Request, res: Response, next: NextFunction) {
-  if (!req.identity) {
-    return res.status(401).json({ error: 'unauthorized', reason: 'missing user identity' });
-  }
-  return next();
-}
-```
-
-**5. `logIdentity` — produce identity-level audit events**  
-emits structured logs for compliance, analytics, and debugging.
-```ts
-// inside your request pipeline
-logger.info('identity_event', {
-  user_id: req.identity?.user_id,
-  org_id: req.identity?.org_id,
-  scopes: req.identity?.scopes,
-  path: req.path,
-  action: 'model_request',
-});
-```
+→ [identifiabl on npm](https://www.npmjs.com/package/identifiabl)  
+→ [github readme with examples](https://github.com/davidcrowe/gatewaystack/tree/main/packages/identifiabl-core)
 
 ## end to end flow
 ```text
@@ -308,13 +229,6 @@ identifiabl plugs into gatewaystack and your existing llm stack without requirin
 - model context protocol (mcp)  
 - oauth2 / oidc identity providers  
 - any llm provider (openai, anthropic, google, internal models)  
-
-## getting started
-
-**for implementation details**:  
-→ [`ai-auth-gateway` quickstart](https://github.com/davidcrowe/gatewaystack#quick-start)  
-→ [auth0 setup guide](https://github.com/davidcrowe/gatewaystack#3-minimal-auth0-setup-10-minutes)  
-→ [integration examples](https://github.com/davidcrowe/gatewaystack/tree/main/examples)
 
 ## links
 
