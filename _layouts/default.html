@@ -178,6 +178,27 @@
         color: var(--muted);
       }
 
+      .arch-pill-primary {
+        background: #5c53ff;
+        color: white;
+        font-weight: 600;
+        position: relative;
+        box-shadow: 0 2px 4px rgba(92, 83, 255, 0.25);
+      }
+
+      .arch-pill-primary::after {
+        content: "";
+        position: absolute;
+        inset: -4px;
+        border-radius: 999px;
+        background: radial-gradient(
+          rgba(92, 83, 255, 0.28),
+          rgba(92, 83, 255, 0)
+        );
+        z-index: -1;
+      }
+
+
       @media (max-width: 640px) {
         .arch-row {
           flex-direction: column;

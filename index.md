@@ -13,9 +13,9 @@ npm i identifiabl
 
 > 1-line jwt/jwks verification for mcp and apps sdk backends — without touching app logic
 > user → apps sdk/mcp → identifiabl → your backend
->
-> ✓ production-tested in [inner](https://innerdreamapp.com)  
-> ✓ first [gatewaystack](https://gatewaystack.com) release  
+
+✓ production-tested in [inner](https://innerdreamapp.com)  
+✓ first [gatewaystack](https://gatewaystack.com) release  
 
 until now, most llm systems have relied on shared api keys — not real user identity.
 
@@ -62,7 +62,7 @@ it lets you:
 - normalizes identity into `{ user_id, org_id, tenant, roles, scopes }` with consistent claim mapping across providers  
 
 > 📦 **implementation**: [`identifiabl`](https://github.com/davidcrowe/GatewayStack/tree/main/packages/identifiabl-core)  
-> 📦 **npm package**: [`npm i identifiabl`](https://www.npmjs.com/package/identifiabl) (published)
+> 📦 **npm package**: [`npm i identifiabl`](https://www.npmjs.com/package/identifiabl)
 
 ## why now?
 
@@ -252,7 +252,7 @@ want to contact us for enterprise deployments?
       <div class="arch-node-sub">user-scoped trust &amp; governance gateway</div>
 
       <div class="arch-pill-row">
-        <span class="arch-pill">identifiabl</span>
+        <span class="arch-pill arch-pill-primary">identifiabl</span>
         <span class="arch-pill">transformabl</span>
         <span class="arch-pill">validatabl</span>
         <span class="arch-pill">limitabl</span>
